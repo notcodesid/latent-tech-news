@@ -19,7 +19,6 @@ def fetch_hn_front_page() -> list[dict]:
             "title": h["title"],
             "url": h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}",
             "points": h["points"],
-            "comments": h.get("num_comments", 0),
         }
         for h in hits
     ]
@@ -33,18 +32,18 @@ def filter_stories(stories: list[dict]) -> list[dict]:
             filtered.append(s)
     return sorted(filtered, key=lambda x: x["points"], reverse=True)[:5]
 
-# ─── 3. Summarize via Groq (FREE) ─────────────────────────
+# ─── 3. Summarize via Groq (short + lowercase) ────────────
 def summarize_story(story: dict) -> str:
-    prompt = f"""You are a VC associate writing a daily briefing for a busy founder.
+    prompt = f"""you're texting a founder friend. super casual. lowercase only. no punctuation except maybe a period. max 2 short sentences.
 
-Story: "{story['title']}"
-URL: {story['url']}
+story: "{story['title']}"
+link: {story['url']}
 
-Write exactly 2 lines:
-1) What happened (product name, company, or event if mentioned)
-2) Why it matters to a technical founder building in AI
+examples:
+- yo atlassian is collecting user data to train ai now lmao. {story['url']}
+- damn 44% of deezer uploads are ai generated. {story['url']}
 
-Be concise. No fluff. No markdown headers."""
+now write yours:"""
 
     resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -53,15 +52,15 @@ Be concise. No fluff. No markdown headers."""
             "Content-Type": "application/json",
         },
         json={
-            "model": "llama-3.1-8b-instant",  # fast, free, good enough
+            "model": "llama-3.1-8b-instant",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 150,
-            "temperature": 0.7,
+            "max_tokens": 80,
+            "temperature": 0.9,
         },
         timeout=60,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    return resp.json()["choices"][0]["message"]["content"].strip().lower()
 
 # ─── 4. Send Telegram ─────────────────────────────────────
 def send_telegram_message(text: str) -> dict:
@@ -70,40 +69,32 @@ def send_telegram_message(text: str) -> dict:
         "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": False,
+        "disable_web_page_preview": True,  # cleaner, no previews
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
-# ─── 5. Build + Send Digest ───────────────────────────────
-def build_digest(stories: list[dict]) -> str:
-    lines = ["🧠 *Latent Tech Digest* — AI/LLM/Agents\n"]
-    for i, s in enumerate(stories, 1):
-        summary = summarize_story(s)
-        lines.append(f"*{i}. {s['title']}*")
-        lines.append(f"{summary}")
-        lines.append(f"🔗 [Link]({s['url']}) · {s['points']} pts · {s['comments']} comments\n")
-    return "\n".join(lines)
-
+# ─── 5. Send each story as separate message ───────────────
 def main():
-    print("Fetching HN front page...")
+    print("fetching hn...")
     stories = fetch_hn_front_page()
     
-    print("Filtering AI stories...")
+    print("filtering ai stories...")
     filtered = filter_stories(stories)
     
     if not filtered:
-        send_telegram_message("🫠 No AI stories on HN front page right now.")
-        print("Nothing to send.")
+        send_telegram_message("yo nothing interesting on hn rn lol")
+        print("nothing to send.")
         return
     
-    print(f"Summarizing {len(filtered)} stories via Groq...")
-    digest = build_digest(filtered)
+    print(f"sending {len(filtered)} stories...")
+    for s in filtered:
+        msg = summarize_story(s)
+        send_telegram_message(msg)
+        print(f"sent: {msg[:40]}...")
     
-    print("Sending to Telegram...")
-    send_telegram_message(digest)
-    print("Done. Digest sent.")
+    print("done.")
 
 if __name__ == "__main__":
     main()
