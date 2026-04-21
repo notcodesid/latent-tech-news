@@ -30,7 +30,7 @@ def filter_stories(stories: list[dict]) -> list[dict]:
     for s in stories:
         if any(k.upper() in s["title"].upper() for k in keywords):
             filtered.append(s)
-    return sorted(filtered, key=lambda x: x["points"], reverse=True)[:5]
+    return sorted(filtered, key=lambda x: x["points"], reverse=True)[:3]  
 
 # ─── 3. Summarize via Groq (short + lowercase) ────────────
 def summarize_story(story: dict) -> str:
