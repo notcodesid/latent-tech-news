@@ -22,11 +22,3 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      
-      - name: Commit state
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add sent_log.json subscribers.json
-          git diff --cached --quiet || git commit -m "update subscribers and sent log"
-          git push
