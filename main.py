@@ -8,21 +8,10 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-SENT_LOG_FILE = "sent_log.json"
-SUBSCRIBERS_FILE = "subscribers.json"
+# ─── In-memory state (resets each run, but no more git push errors) ──
+sent_urls = set()
 
-# ─── Load/Save Helpers ────────────────────────────────────
-def load_json(path: str, default):
-    if not os.path.exists(path):
-        return default
-    with open(path, "r") as f:
-        return json.load(f)
-
-def save_json(path: str, data):
-    with open(path, "w") as f:
-        json.dump(data, f)
-
-# ─── Collect New Subscribers ──────────────────────────────
+# ─── Collect Subscribers (no welcome spam) ──────────────────
 def collect_subscribers() -> list[str]:
     """Get chat IDs from people who messaged the bot recently."""
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-50"
@@ -31,23 +20,16 @@ def collect_subscribers() -> list[str]:
         return []
     
     updates = resp.json().get("result", [])
-    subscribers = set(load_json(SUBSCRIBERS_FILE, []))
+    subscribers = set()
     
     for u in updates:
         msg = u.get("message", {})
         chat = msg.get("chat", {})
         
-        # Only collect private chats (not group chats)
+        # Only collect private chats
         if chat.get("type") == "private":
-            chat_id = str(chat["id"])
-            subscribers.add(chat_id)
-            
-            # Optional: send welcome on first join
-            text = msg.get("text", "").lower().strip()
-            if text in ["/start", "start", "hi", "hello"]:
-                send_to_chat(chat_id, "yo, you're in. i'll send ai/tech news every 3 hours. lowercase only lmao.")
+            subscribers.add(str(chat["id"]))
     
-    save_json(SUBSCRIBERS_FILE, list(subscribers))
     return list(subscribers)
 
 # ─── Send to One Chat ─────────────────────────────────────
@@ -78,7 +60,7 @@ def fetch_hn_front_page() -> list[dict]:
     ]
 
 # ─── Filter AI Stories ────────────────────────────────────
-def filter_stories(stories: list[dict], sent_urls: set) -> list[dict]:
+def filter_stories(stories: list[dict]) -> list[dict]:
     keywords = ["AI", "LLM", "OpenAI", "Anthropic", "model", "agent", "GPT", "Claude", "Mistral", "Llama"]
     filtered = []
     for s in stories:
@@ -117,7 +99,6 @@ write yours:"""
 
 # ─── Main ─────────────────────────────────────────────────
 def main():
-    # Step 1: Collect anyone who messaged the bot
     subscribers = collect_subscribers()
     if not subscribers:
         print("no subscribers yet.")
@@ -125,27 +106,19 @@ def main():
     
     print(f"{len(subscribers)} subscribers found")
     
-    # Step 2: Fetch and filter news
-    sent_urls = set(load_json(SENT_LOG_FILE, {}).get("urls", []))
     stories = fetch_hn_front_page()
-    filtered = filter_stories(stories, sent_urls)
+    filtered = filter_stories(stories)
     
     if not filtered:
         print("no new stories.")
         return
     
-    # Step 3: Send to ALL subscribers
-    new_urls = set()
     for s in filtered:
         msg = summarize_story(s)
         for chat_id in subscribers:
             send_to_chat(chat_id, msg)
-        new_urls.add(s["url"])
+        sent_urls.add(s["url"])
         print(f"sent to {len(subscribers)} people: {s['title'][:40]}...")
-    
-    # Step 4: Save what we sent
-    sent_urls.update(new_urls)
-    save_json(SENT_LOG_FILE, {"urls": list(sent_urls)})
 
 if __name__ == "__main__":
     main()
