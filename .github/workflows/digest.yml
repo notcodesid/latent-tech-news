@@ -2,7 +2,7 @@ name: Latent Tech Digest
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # Every 3 hours: 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00 UTC
+    - cron: '0 */3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,12 +10,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          
       - run: pip install requests python-dotenv
+      
       - run: python main.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      
+      - name: Commit sent log
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add sent_log.json
+          git diff --cached --quiet || git commit -m "update sent log"
+          git push

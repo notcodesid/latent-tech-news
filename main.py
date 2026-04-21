@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from dotenv import load_dotenv
 
@@ -7,6 +8,20 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+SENT_LOG_FILE = "sent_log.json"
+
+# ─── Load/Save Sent URLs ──────────────────────────────────
+def load_sent_urls() -> set:
+    if not os.path.exists(SENT_LOG_FILE):
+        return set()
+    with open(SENT_LOG_FILE, "r") as f:
+        data = json.load(f)
+    return set(data.get("urls", []))
+
+def save_sent_urls(urls: set):
+    with open(SENT_LOG_FILE, "w") as f:
+        json.dump({"urls": list(urls)}, f)
 
 # ─── 1. Fetch HN ──────────────────────────────────────────
 def fetch_hn_front_page() -> list[dict]:
@@ -19,31 +34,31 @@ def fetch_hn_front_page() -> list[dict]:
             "title": h["title"],
             "url": h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}",
             "points": h["points"],
+            "comments": h.get("num_comments", 0),
         }
         for h in hits
     ]
 
 # ─── 2. Filter AI stories ─────────────────────────────────
-def filter_stories(stories: list[dict]) -> list[dict]:
+def filter_stories(stories: list[dict], sent_urls: set) -> list[dict]:
     keywords = ["AI", "LLM", "OpenAI", "Anthropic", "model", "agent", "GPT", "Claude", "Mistral", "Llama"]
     filtered = []
     for s in stories:
         if any(k.upper() in s["title"].upper() for k in keywords):
-            filtered.append(s)
-    return sorted(filtered, key=lambda x: x["points"], reverse=True)[:3]  
+            if s["url"] not in sent_urls:  # skip already sent
+                filtered.append(s)
+    return sorted(filtered, key=lambda x: x["points"], reverse=True)[:3]
 
-# ─── 3. Summarize via Groq (short + lowercase) ────────────
+# ─── 3. Summarize via Groq ───────────────────────────────
 def summarize_story(story: dict) -> str:
-    prompt = f"""you're texting a founder friend. super casual. lowercase only. no punctuation except maybe a period. max 2 short sentences.
+    prompt = f"""you're texting a founder friend. super casual. lowercase only. max 2 short sentences.
 
 story: "{story['title']}"
 link: {story['url']}
 
-examples:
-- yo atlassian is collecting user data to train ai now lmao. {story['url']}
-- damn 44% of deezer uploads are ai generated. {story['url']}
+example: yo atlassian is collecting user data to train ai now lmao. {story['url']}
 
-now write yours:"""
+write yours:"""
 
     resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -69,32 +84,34 @@ def send_telegram_message(text: str) -> dict:
         "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": True,  # cleaner, no previews
+        "disable_web_page_preview": True,
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
-# ─── 5. Send each story as separate message ───────────────
+# ─── 5. Main ──────────────────────────────────────────────
 def main():
-    print("fetching hn...")
-    stories = fetch_hn_front_page()
+    sent_urls = load_sent_urls()
     
-    print("filtering ai stories...")
-    filtered = filter_stories(stories)
+    stories = fetch_hn_front_page()
+    filtered = filter_stories(stories, sent_urls)
     
     if not filtered:
-        send_telegram_message("yo nothing interesting on hn rn lol")
-        print("nothing to send.")
+        print("no new stories to send.")
         return
     
-    print(f"sending {len(filtered)} stories...")
+    new_urls = set()
     for s in filtered:
         msg = summarize_story(s)
         send_telegram_message(msg)
-        print(f"sent: {msg[:40]}...")
+        new_urls.add(s["url"])
+        print(f"sent: {s['title'][:40]}...")
     
-    print("done.")
+    # Save updated log
+    sent_urls.update(new_urls)
+    save_sent_urls(sent_urls)
+    print(f"done. {len(new_urls)} new stories sent.")
 
 if __name__ == "__main__":
     main()
